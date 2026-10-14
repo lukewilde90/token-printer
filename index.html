@@ -650,6 +650,10 @@ async function printMxw01(bmp) {
 
   const secs = (Date.now() - tStart) / 1000;
   log('data finished: ' + writes + ' writes, final chunk size ' + chunk + ', ' + secs.toFixed(1) + 's, ~' + Math.round(data.length / secs) + ' bytes/s');
+  // Some Bluetooth bridges report a write as done before it has actually been sent. Give the last
+  // packets time to reach the printer before telling it the data is finished, or the bottom is lost.
+  status('Finishing…');
+  await sleep(2500);
   await sendCmd(0xAD, [0x00]);                        // flush
   log('flush sent');
   try {                                               // print complete (not all units send this)
