@@ -485,7 +485,7 @@ $('printBtn').onclick = print;
 
 async function connect() {
   if (!navigator.bluetooth) {
-    status('Web Bluetooth isn’t available here. Use Chrome or Edge, and open this file over https:// or from a local file/localhost.', 'err');
+    status(btHint(), 'err');
     return;
   }
   try {
@@ -609,11 +609,14 @@ async function printMxw01(bmp) {
   const ack = await waitFor(0xA9, 10000);
   if (ack.length > 6 && ack[6] !== 0) throw new Error('Printer rejected the print request');
 
-  const mode = $('xfer').value;
-  const presets = { fast: [180, 8], bal: [100, 25], safe: [60, 25], slow: [20, 25] };
+  const mode = 'adaptive';
   const useResp = false;   // this printer's data channel only reliably accepts unacknowledged writes
-  let chunk = (presets[mode] || presets.bal)[0];
-  const delay = (presets[mode] || presets.bal)[1];
+  // Start with big packets (fewest BLE calls) and adapt: back off if the bridge rate-limits us,
+  // step the packet size down only if a write is rejected for size.
+  const SIZES = [180, 100, 60, 20];
+  let chunk = SIZES[0];
+  let delay = 25;
+  let rateHits = 0;
   log(`data: ${data.length} bytes, ${rows} rows, mode=${mode}, acknowledged=${useResp}, chunk=${chunk}, delay=${delay}ms`);
   let writes = 0;
   const tStart = Date.now();
@@ -628,13 +631,21 @@ async function printMxw01(bmp) {
       }
       i += chunk; writes++;
     } catch (e) {
-      log('write error at byte ' + i + ' (chunk ' + chunk + '): ' + e.message);
-      if (chunk > 20) { chunk = 20; await sleep(50); continue; }   // fall back to default MTU size
+      const em = (e && e.message) ? e.message : String(e);
+      log('write error at byte ' + i + ' (chunk ' + chunk + ', delay ' + delay + 'ms): ' + em);
+      if (/rate limit|too many/i.test(em)) {            // bridge is throttling us: slow down and retry same packet
+        if (++rateHits > 60) throw new Error('The Bluetooth bridge keeps rate-limiting the transfer (' + em + ')');
+        delay = Math.min(400, delay * 2);
+        await sleep(300 + delay);
+        continue;
+      }
+      const next = SIZES.find(s => s < chunk);          // otherwise try a smaller packet size
+      if (next) { chunk = next; await sleep(50); continue; }
       throw e;
     }
     if (delay) await sleep(delay);
     if (writes % 40 === 0) log(`sent ${i} bytes (${writes} writes) in ${((Date.now() - tStart) / 1000).toFixed(1)}s`);
-    if ((i / chunk) % 100 === 0) status(`Sending data… ${Math.round(i * 100 / data.length)}%`);
+    if (writes % 10 === 0) status(`Sending data… ${Math.min(100, Math.round(i * 100 / data.length))}%`);
   }
 
   const secs = (Date.now() - tStart) / 1000;
@@ -687,7 +698,12 @@ async function print() {
     $('printBtn').disabled = !characteristic;
   }
 }
-status(navigator.bluetooth ? 'Page ready.' : 'Page ready, but this browser has no Web Bluetooth.');
+function btHint() {
+  if (navigator.bluetooth) return '';
+  if (!window.isSecureContext) return 'No Web Bluetooth: this page is not on https (it is on ' + location.protocol + '). Host it at an https address.';
+  return 'No Web Bluetooth: Safari is not getting it from the extension. Turn the extension on, allow it on this site, open the page in a normal (not Private) tab, then reload.';
+}
+status(navigator.bluetooth ? 'Page ready.' : btHint(), navigator.bluetooth ? '' : 'err');
 })();
 </script>
 </body>
