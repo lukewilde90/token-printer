@@ -64,6 +64,12 @@
     </select>
     <label for="darkness">Darkness (MXW01 only): <span id="darkVal">75</span></label>
     <input id="darkness" type="range" min="1" max="100" value="75">
+    <label for="xfer">Data transfer (MXW01 only)</label>
+    <select id="xfer">
+      <option value="auto">Auto (prefer acknowledged writes)</option>
+      <option value="resp">Acknowledged writes (reliable)</option>
+      <option value="noresp">Fast writes, no acknowledgement (slow &amp; paced)</option>
+    </select>
   </section>
 
   <section class="card">
@@ -345,7 +351,8 @@ async function connect() {
     if (!characteristic) throw new Error('No writable characteristic found on this device.');
     $('printBtn').disabled = false;
     $('connectBtn').textContent = 'Connected: ' + (device.name || 'printer');
-    status('Connected. Ready to print.', 'ok');
+    const p = mxw ? mxw.dat.properties : null;
+    status('Connected. Ready to print.' + (p ? ' (data channel: ' + (p.write ? 'write ' : '') + (p.writeWithoutResponse ? 'writeWithoutResponse' : '') + ')' : ''), 'ok');
   } catch (e) {
     status('Connect failed: ' + e.message, 'err');
   }
@@ -415,16 +422,27 @@ async function printMxw01(bmp) {
   const ack = await waitFor(0xA9, 10000);
   if (ack.length > 6 && ack[6] !== 0) throw new Error('Printer rejected the print request');
 
-  let chunk = 96;
+  const props = mxw.dat.properties;
+  const mode = $('xfer').value;
+  const useResp = mode === 'resp' || (mode === 'auto' && props.write);
+  let chunk = useResp ? 96 : 20;
+  const delay = useResp ? 0 : 25;
   for (let i = 0; i < data.length; ) {
+    const slice = data.slice(i, i + chunk);
     try {
-      await mxw.dat.writeValueWithoutResponse(data.subarray(i, i + chunk));
+      if (useResp) {
+        if (mxw.dat.writeValueWithResponse) await mxw.dat.writeValueWithResponse(slice);
+        else await mxw.dat.writeValue(slice);
+      } else {
+        await mxw.dat.writeValueWithoutResponse(slice);
+      }
       i += chunk;
     } catch (e) {
       if (chunk > 20) { chunk = 20; await sleep(50); continue; }   // fall back to default MTU size
       throw e;
     }
-    await sleep(8);
+    if (delay) await sleep(delay);
+    if ((i / chunk) % 100 === 0) status(`Sending data… ${Math.round(i * 100 / data.length)}%`);
   }
 
   await sendCmd(0xAD, [0x00]);                        // flush
