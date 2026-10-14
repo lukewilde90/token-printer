@@ -325,6 +325,11 @@ async function connect() {
       const dat = await svc.getCharacteristic(UUID('ae03'));
       await ntf.startNotifications();
       ntf.addEventListener('characteristicvaluechanged', onNotify);
+      try {   // some models report completion on AE04
+        const ntf2 = await svc.getCharacteristic(UUID('ae04'));
+        await ntf2.startNotifications();
+        ntf2.addEventListener('characteristicvaluechanged', onNotify);
+      } catch (e) { /* optional */ }
       mxw = { ctl, ntf, dat };
       characteristic = ctl;
       $('width').value = '384'; $('width').disabled = true; render();
@@ -350,6 +355,8 @@ async function connect() {
 const UUID = s => `0000${s}-0000-1000-8000-00805f9b34fb`;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const inbox = {};
+const seen = [];
+const hex = d => Array.from(d, b => b.toString(16).padStart(2, '0')).join(' ');
 
 function crc8(bytes) {            // CRC-8, polynomial 0x07
   let crc = 0;
@@ -366,6 +373,8 @@ function makeCmd(id, payload) {
 function onNotify(e) {
   const v = e.target.value;
   const d = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  seen.push(String(e.target.uuid).slice(4, 8) + ': ' + hex(d));
+  if (seen.length > 20) seen.shift();
   if (d.length < 6 || d[0] !== 0x22 || d[1] !== 0x21) return;
   (inbox[d[2]] = inbox[d[2]] || []).push(d.slice());
 }
@@ -419,7 +428,12 @@ async function printMxw01(bmp) {
   }
 
   await sendCmd(0xAD, [0x00]);                        // flush
-  await waitFor(0xAA, 15000 + (rows / 15) * 1000);    // print complete
+  try {                                               // print complete (not all units send this)
+    await waitFor(0xAA, 10000 + (rows / 30) * 1000);
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function print() {
@@ -429,11 +443,13 @@ async function print() {
     render();
     const copies = Math.max(1, Math.min(20, parseInt($('copies').value, 10) || 1));
     if (mxw) {
+      let confirmed = true;
       for (let c = 0; c < copies; c++) {
         status(`Printing ${c + 1} of ${copies}…`);
-        await printMxw01(toBitmap(true));
+        if (!(await printMxw01(toBitmap(true)))) confirmed = false;
       }
-      status('Done!', 'ok');
+      if (confirmed) status('Done!', 'ok');
+      else status('Data sent, but the printer sent no "finished" message. Printer replies: ' + (seen.slice(-6).join(' | ') || 'none'));
       return;
     }
     const payload = buildEscPos(toBitmap());
