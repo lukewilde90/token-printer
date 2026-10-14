@@ -614,8 +614,10 @@ async function printMxw01(bmp) {
   // Start with big packets (fewest BLE calls) and adapt: back off if the bridge rate-limits us,
   // step the packet size down only if a write is rejected for size.
   const SIZES = [180, 100, 60, 20];
-  let chunk = SIZES[0];
-  let delay = 25;
+  // Tunable from the page address, e.g. ...index.html?chunk=100&delay=120
+  const qs = new URLSearchParams(location.search);
+  let chunk = Math.min(180, Math.max(20, parseInt(qs.get('chunk'), 10) || SIZES[0]));
+  let delay = Math.max(0, parseInt(qs.get('delay'), 10) || 70);
   let rateHits = 0;
   log(`data: ${data.length} bytes, ${rows} rows, mode=${mode}, acknowledged=${useResp}, chunk=${chunk}, delay=${delay}ms`);
   let writes = 0;
