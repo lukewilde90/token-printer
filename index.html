@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MTG Token Printer</title>
+<style>
+  :root { --bg:#14141a; --card:#1f1f29; --fg:#eee; --mut:#9a9aab; --acc:#e0a526; --bad:#e5484d; --ok:#3fb950; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); padding:16px; }
+  main { max-width: 900px; margin: 0 auto; display:grid; gap:16px; grid-template-columns: 1fr; }
+  @media (min-width: 800px) { main { grid-template-columns: 1fr 1fr; } header { grid-column: 1 / -1; } }
+  h1 { margin:0 0 4px; font-size:1.4rem; }
+  .card { background:var(--card); border-radius:12px; padding:16px; }
+  label { display:block; font-size:.8rem; color:var(--mut); margin:12px 0 4px; }
+  input, textarea, select { width:100%; padding:10px; border-radius:8px; border:1px solid #333; background:#111118; color:var(--fg); font-size:1rem; }
+  textarea { min-height:90px; resize:vertical; }
+  .row { display:flex; gap:8px; }
+  .row > * { flex:1; }
+  button { padding:10px 14px; border:0; border-radius:8px; background:var(--acc); color:#111; font-weight:600; font-size:1rem; cursor:pointer; }
+  button.sec { background:#33333f; color:var(--fg); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  #status { margin-top:10px; font-size:.9rem; color:var(--mut); min-height:1.2em; }
+  #status.ok { color:var(--ok); } #status.err { color:var(--bad); }
+  #preview { width:100%; max-width:384px; background:#fff; border-radius:6px; display:block; margin:0 auto; image-rendering: pixelated; }
+  #results { display:grid; gap:6px; margin-top:10px; max-height:220px; overflow:auto; }
+  #results button { text-align:left; background:#2a2a36; color:var(--fg); font-weight:400; font-size:.9rem; }
+  .chk { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:.9rem; }
+  .chk input { width:auto; }
+  small { color:var(--mut); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>MTG Token Printer</h1>
+    <small>Prints to a Bluetooth ESC/POS thermal printer via Web Bluetooth (Chrome / Edge on Android, Windows, macOS, Linux, ChromeOS – not iOS Safari).</small>
+  </header>
+
+  <section class="card">
+    <label for="search">Look up a token on Scryfall (optional)</label>
+    <div class="row">
+      <input id="search" placeholder="e.g. Goblin, Treasure, Soldier">
+      <button class="sec" id="searchBtn" style="flex:0 0 auto">Search</button>
+    </div>
+    <div id="results"></div>
+
+    <label for="name">Name</label>
+    <input id="name" value="Goblin">
+    <label for="type">Type line</label>
+    <input id="type" value="Token Creature — Goblin">
+    <div class="row">
+      <div><label for="pt">Power / Toughness</label><input id="pt" value="1/1"></div>
+      <div><label for="copies">Copies</label><input id="copies" type="number" min="1" max="20" value="1"></div>
+    </div>
+    <label for="rules">Rules text</label>
+    <textarea id="rules"></textarea>
+
+    <div class="chk"><input type="checkbox" id="useArt"><label for="useArt" style="margin:0;color:var(--fg)">Include artwork (when looked up on Scryfall)</label></div>
+    <label for="width">Paper width</label>
+    <select id="width">
+      <option value="384">58 mm (384 dots)</option>
+      <option value="576">80 mm (576 dots)</option>
+    </select>
+    <label for="darkness">Darkness (MXW01 only): <span id="darkVal">75</span></label>
+    <input id="darkness" type="range" min="1" max="100" value="75">
+  </section>
+
+  <section class="card">
+    <canvas id="preview"></canvas>
+    <div class="row" style="margin-top:14px">
+      <button id="connectBtn" class="sec">Connect printer</button>
+      <button id="printBtn" disabled>Print</button>
+    </div>
+    <div id="status"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const canvas = $('preview');
+let artImg = null;
+let device = null, characteristic = null, mxw = null;
+$('darkness').addEventListener('input', () => { $('darkVal').textContent = $('darkness').value; });
+
+// ---------- Scryfall lookup ----------
+$('searchBtn').onclick = search;
+$('search').addEventListener('keydown', e => { if (e.key === 'Enter') search(); });
+
+async function search() {
+  const q = $('search').value.trim();
+  if (!q) return;
+  const box = $('results');
+  box.innerHTML = '<small>Searching…</small>';
+  try {
+    const url = 'https://api.scryfall.com/cards/search?unique=cards&q=' +
+      encodeURIComponent(`t:token name:"${q}"`);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('No tokens found');
+    const data = await r.json();
+    box.innerHTML = '';
+    data.data.slice(0, 30).forEach(c => {
+      const face = c.card_faces && !c.image_uris ? c.card_faces[0] : c;
+      const b = document.createElement('button');
+      const pt = c.power ? ` ${c.power}/${c.toughness}` : '';
+      b.textContent = `${c.name}${pt} — ${c.type_line}${c.set ? ' (' + c.set.toUpperCase() + ')' : ''}`;
+      b.onclick = () => pick(c, face);
+      box.appendChild(b);
+    });
+  } catch (e) {
+    box.innerHTML = `<small>${e.message}</small>`;
+  }
+}
+
+function pick(c, face) {
+  $('name').value = c.name.split(' // ')[0];
+  $('type').value = (face.type_line || c.type_line || '');
+  const p = face.power ?? c.power, t = face.toughness ?? c.toughness;
+  $('pt').value = p != null ? `${p}/${t}` : '';
+  $('rules').value = face.oracle_text || c.oracle_text || '';
+  artImg = null;
+  const src = (face.image_uris || c.image_uris || {}).art_crop;
+  if (src) {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => { artImg = img; render(); };
+    img.onerror = () => { artImg = null; render(); };
+    img.src = src;
+  }
+  render();
+}
+
+// ---------- Rendering ----------
+function wrap(ctx, text, maxW) {
+  const lines = [];
+  for (const para of text.split('\n')) {
+    let line = '';
+    for (const word of para.split(/\s+/)) {
+      const test = line ? line + ' ' + word : word;
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line); line = word; }
+      else line = test;
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+function render() {
+  const W = parseInt($('width').value, 10);
+  const H = Math.round(W * 1.4);
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#000'; ctx.strokeStyle = '#000';
+
+  const m = Math.round(W * 0.03);
+  const u = W / 384;                 // scale unit
+  ctx.lineWidth = 4 * u;
+  roundRect(ctx, m, m, W - 2 * m, H - 2 * m, 18 * u); ctx.stroke();
+  const pad = m + 12 * u;
+  const inner = W - 2 * pad;
+  let y = pad;
+
+  // Name
+  ctx.textBaseline = 'top';
+  let fs = 30 * u;
+  const name = $('name').value || '';
+  do { ctx.font = `bold ${fs}px Georgia, serif`; fs -= 1; } while (ctx.measureText(name).width > inner && fs > 12);
+  ctx.fillText(name, pad, y);
+  y += fs * 1.5;
+  ctx.lineWidth = 2 * u;
+  ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke();
+  y += 8 * u;
+
+  // Art
+  const artH = Math.round(H * 0.30);
+  if ($('useArt').checked && artImg) {
+    const r = Math.max(inner / artImg.width, artH / artImg.height);
+    const sw = inner / r, sh = artH / r;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(pad, y, inner, artH); ctx.clip();
+    ctx.filter = 'grayscale(1) contrast(1.25) brightness(1.05)';
+    ctx.drawImage(artImg, (artImg.width - sw) / 2, (artImg.height - sh) / 2, sw, sh, pad, y, inner, artH);
+    ctx.restore();
+    ctx.lineWidth = 2 * u; ctx.strokeRect(pad, y, inner, artH);
+    y += artH + 8 * u;
+  }
+
+  // Type line
+  fs = 20 * u;
+  const type = $('type').value || '';
+  do { ctx.font = `bold ${fs}px Georgia, serif`; fs -= 1; } while (ctx.measureText(type).width > inner && fs > 10);
+  ctx.fillText(type, pad, y);
+  y += fs * 1.5;
+  ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke();
+  y += 8 * u;
+
+  // P/T box reserve
+  const pt = $('pt').value.trim();
+  const ptH = pt ? 50 * u : 0;
+  const bottom = H - m - 10 * u - ptH;
+
+  // Rules text (shrink to fit)
+  const rules = $('rules').value;
+  fs = 24 * u;
+  let lines;
+  while (true) {
+    ctx.font = `${fs}px Georgia, serif`;
+    lines = wrap(ctx, rules, inner);
+    if (y + lines.length * fs * 1.25 <= bottom || fs <= 11) break;
+    fs -= 1;
+  }
+  lines.forEach((l, i) => ctx.fillText(l, pad, y + i * fs * 1.25));
+
+  // P/T
+  if (pt) {
+    ctx.font = `bold ${34 * u}px Georgia, serif`;
+    const tw = ctx.measureText(pt).width;
+    const bw = tw + 28 * u, bh = 46 * u;
+    const bx = W - pad - bw, by = H - m - 10 * u - bh;
+    ctx.fillStyle = '#fff'; ctx.lineWidth = 3 * u;
+    roundRect(ctx, bx, by, bw, bh, 10 * u); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(pt, bx + bw / 2, by + bh / 2 + 2 * u);
+    ctx.textAlign = 'left';
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+['name', 'type', 'pt', 'rules', 'useArt', 'width'].forEach(id => $(id).addEventListener('input', render));
+render();
+
+// ---------- Bitmap conversion (Floyd–Steinberg dither) ----------
+function toBitmap(lsbFirst = false) {
+  const ctx = canvas.getContext('2d');
+  const { width: W, height: H } = canvas;
+  const img = ctx.getImageData(0, 0, W, H).data;
+  const g = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) g[i] = 0.299 * img[i*4] + 0.587 * img[i*4+1] + 0.114 * img[i*4+2];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, old = g[i], nw = old < 128 ? 0 : 255, err = old - nw;
+    g[i] = nw;
+    if (x + 1 < W) g[i + 1] += err * 7 / 16;
+    if (y + 1 < H) {
+      if (x > 0) g[i + W - 1] += err * 3 / 16;
+      g[i + W] += err * 5 / 16;
+      if (x + 1 < W) g[i + W + 1] += err * 1 / 16;
+    }
+  }
+  const bpr = W / 8;
+  const out = new Uint8Array(bpr * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++)
+    if (g[y * W + x] < 128) out[y * bpr + (x >> 3)] |= lsbFirst ? (1 << (x & 7)) : (0x80 >> (x & 7));
+  return { data: out, bpr, H };
+}
+
+function buildEscPos(bmp) {
+  const parts = [new Uint8Array([0x1B, 0x40])];      // init
+  const band = 64;
+  for (let y = 0; y < bmp.H; y += band) {
+    const h = Math.min(band, bmp.H - y);
+    parts.push(new Uint8Array([0x1D, 0x76, 0x30, 0x00,
+      bmp.bpr & 255, bmp.bpr >> 8, h & 255, h >> 8]));
+    parts.push(bmp.data.subarray(y * bmp.bpr, (y + h) * bmp.bpr));
+  }
+  parts.push(new Uint8Array([0x1B, 0x64, 0x04]));    // feed 4 lines
+  const len = parts.reduce((a, p) => a + p.length, 0);
+  const all = new Uint8Array(len);
+  let o = 0; parts.forEach(p => { all.set(p, o); o += p.length; });
+  return all;
+}
+
+// ---------- Bluetooth ----------
+const status = (msg, cls = '') => { $('status').textContent = msg; $('status').className = cls; };
+
+const OPTIONAL_SERVICES = [
+  '000018f0-0000-1000-8000-00805f9b34fb',
+  '0000ffe0-0000-1000-8000-00805f9b34fb',
+  '0000ff00-0000-1000-8000-00805f9b34fb',
+  '0000fee7-0000-1000-8000-00805f9b34fb',
+  '0000ae30-0000-1000-8000-00805f9b34fb',
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455',
+  'e7810a71-73ae-499d-8c15-faa9aef0c3f2',
+  '0000ffe5-0000-1000-8000-00805f9b34fb',
+];
+
+$('connectBtn').onclick = connect;
+$('printBtn').onclick = print;
+
+async function connect() {
+  if (!navigator.bluetooth) {
+    status('Web Bluetooth isn’t available here. Use Chrome or Edge, and open this file over https:// or from a local file/localhost.', 'err');
+    return;
+  }
+  try {
+    status('Choose your printer…');
+    device = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: OPTIONAL_SERVICES });
+    device.addEventListener('gattserverdisconnected', () => {
+      characteristic = null; $('printBtn').disabled = true; $('connectBtn').textContent = 'Connect printer';
+      status('Printer disconnected.');
+    });
+    status('Connecting…');
+    const server = await device.gatt.connect();
+    characteristic = null; mxw = null;
+    // MXW01 / C17 "cat printer" family: service AE30 with AE01 (commands), AE02 (notify), AE03 (data)
+    try {
+      const svc = await server.getPrimaryService(UUID('ae30'));
+      const ctl = await svc.getCharacteristic(UUID('ae01'));
+      const ntf = await svc.getCharacteristic(UUID('ae02'));
+      const dat = await svc.getCharacteristic(UUID('ae03'));
+      await ntf.startNotifications();
+      ntf.addEventListener('characteristicvaluechanged', onNotify);
+      mxw = { ctl, ntf, dat };
+      characteristic = ctl;
+      $('width').value = '384'; $('width').disabled = true; render();
+    } catch (e) { mxw = null; }
+    if (!mxw) {
+      for (const svc of await server.getPrimaryServices()) {
+        for (const ch of await svc.getCharacteristics()) {
+          if (ch.properties.writeWithoutResponse || ch.properties.write) { characteristic = ch; break; }
+        }
+        if (characteristic) break;
+      }
+    }
+    if (!characteristic) throw new Error('No writable characteristic found on this device.');
+    $('printBtn').disabled = false;
+    $('connectBtn').textContent = 'Connected: ' + (device.name || 'printer');
+    status('Connected. Ready to print.', 'ok');
+  } catch (e) {
+    status('Connect failed: ' + e.message, 'err');
+  }
+}
+
+// ---------- MXW01 protocol ----------
+const UUID = s => `0000${s}-0000-1000-8000-00805f9b34fb`;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const inbox = {};
+
+function crc8(bytes) {            // CRC-8, polynomial 0x07
+  let crc = 0;
+  for (const b of bytes) {
+    crc ^= b;
+    for (let i = 0; i < 8; i++) crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) & 0xFF : (crc << 1) & 0xFF;
+  }
+  return crc;
+}
+function makeCmd(id, payload) {
+  const p = Uint8Array.from(payload);
+  return Uint8Array.from([0x22, 0x21, id, 0x00, p.length & 255, p.length >> 8, ...p, crc8(p), 0xFF]);
+}
+function onNotify(e) {
+  const v = e.target.value;
+  const d = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+  if (d.length < 6 || d[0] !== 0x22 || d[1] !== 0x21) return;
+  (inbox[d[2]] = inbox[d[2]] || []).push(d.slice());
+}
+function waitFor(cmd, ms) {
+  return new Promise((res, rej) => {
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      const q = inbox[cmd];
+      if (q && q.length) { clearInterval(iv); res(q.shift()); }
+      else if (Date.now() - t0 > ms) { clearInterval(iv); rej(new Error('Printer did not respond (command 0x' + cmd.toString(16) + ')')); }
+    }, 50);
+  });
+}
+async function sendCmd(id, payload) {
+  await mxw.ctl.writeValueWithoutResponse(makeCmd(id, payload));
+}
+
+async function printMxw01(bmp) {
+  for (const k in inbox) delete inbox[k];
+
+  await sendCmd(0xA1, [0x00]);                        // status
+  const st = await waitFor(0xA1, 10000);
+  if (st.length >= 14 && st[12] !== 0) {
+    const errs = { 1: 'no paper', 9: 'no paper', 4: 'overheated', 8: 'low battery' };
+    throw new Error('Printer reported: ' + (errs[st[13]] || 'error code ' + st[13]));
+  }
+
+  await sendCmd(0xA2, [parseInt($('darkness').value, 10)]);   // intensity 0-100
+
+  // pad to at least 90 rows (printer ignores very short jobs)
+  let rows = bmp.H;
+  const MIN_ROWS = 90;
+  const data = rows >= MIN_ROWS ? bmp.data : (() => {
+    const d = new Uint8Array(MIN_ROWS * bmp.bpr); d.set(bmp.data); rows = MIN_ROWS; return d;
+  })();
+
+  await sendCmd(0xA9, [rows & 255, rows >> 8, 0x30, 0x00]);   // print request (monochrome)
+  const ack = await waitFor(0xA9, 10000);
+  if (ack.length > 6 && ack[6] !== 0) throw new Error('Printer rejected the print request');
+
+  let chunk = 96;
+  for (let i = 0; i < data.length; ) {
+    try {
+      await mxw.dat.writeValueWithoutResponse(data.subarray(i, i + chunk));
+      i += chunk;
+    } catch (e) {
+      if (chunk > 20) { chunk = 20; await sleep(50); continue; }   // fall back to default MTU size
+      throw e;
+    }
+    await sleep(8);
+  }
+
+  await sendCmd(0xAD, [0x00]);                        // flush
+  await waitFor(0xAA, 15000 + (rows / 15) * 1000);    // print complete
+}
+
+async function print() {
+  if (!characteristic) return;
+  $('printBtn').disabled = true;
+  try {
+    render();
+    const copies = Math.max(1, Math.min(20, parseInt($('copies').value, 10) || 1));
+    if (mxw) {
+      for (let c = 0; c < copies; c++) {
+        status(`Printing ${c + 1} of ${copies}…`);
+        await printMxw01(toBitmap(true));
+      }
+      status('Done!', 'ok');
+      return;
+    }
+    const payload = buildEscPos(toBitmap());
+    const chunk = 100;
+    for (let c = 0; c < copies; c++) {
+      status(`Printing ${c + 1} of ${copies}…`);
+      for (let i = 0; i < payload.length; i += chunk) {
+        const slice = payload.subarray(i, i + chunk);
+        if (characteristic.properties.writeWithoutResponse && characteristic.writeValueWithoutResponse)
+          await characteristic.writeValueWithoutResponse(slice);
+        else
+          await characteristic.writeValue(slice);
+        await new Promise(r => setTimeout(r, 15));
+      }
+    }
+    status('Done!', 'ok');
+  } catch (e) {
+    status('Print failed: ' + e.message, 'err');
+  } finally {
+    $('printBtn').disabled = !characteristic;
+  }
+}
+</script>
+</body>
+</html>
