@@ -137,7 +137,7 @@
     <div class="mana">
       <span class="pip w"></span><span class="pip u"></span><span class="pip b"></span><span class="pip r"></span><span class="pip g"></span>
     </div>
-    <h1>MTG Token Printer v1.0</h1>
+    <h1>MTG Token Printer v1.1</h1>
     <div class="tag">Summon a token, then print it on the spot.</div>
   </header>
 
@@ -613,10 +613,10 @@ async function printMxw01(bmp) {
   const useResp = false;   // this printer's data channel only reliably accepts unacknowledged writes
   // Start with big packets (fewest BLE calls) and adapt: back off if the bridge rate-limits us,
   // step the packet size down only if a write is rejected for size.
-  const SIZES = [200, 100, 60, 20];
+  const SIZES = [160, 100, 60, 20];
   // Tunable from the page address, e.g. ...index.html?chunk=100&delay=120
   const qs = new URLSearchParams(location.search);
-  let chunk = Math.min(200, Math.max(20, parseInt(qs.get('chunk'), 10) || SIZES[0]));
+  let chunk = Math.min(160, Math.max(20, parseInt(qs.get('chunk'), 10) || SIZES[0]));
   let delay = Math.max(0, parseInt(qs.get('delay'), 10) || 70);
   let rateHits = 0;
   log(`data: ${data.length} bytes, ${rows} rows, mode=${mode}, acknowledged=${useResp}, chunk=${chunk}, delay=${delay}ms`);
