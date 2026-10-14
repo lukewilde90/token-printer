@@ -66,9 +66,10 @@
     <input id="darkness" type="range" min="1" max="100" value="75">
     <label for="xfer">Data transfer (MXW01 only)</label>
     <select id="xfer">
-      <option value="auto">Auto (prefer acknowledged writes)</option>
-      <option value="resp">Acknowledged writes (reliable)</option>
-      <option value="noresp">Fast writes, no acknowledgement (slow &amp; paced)</option>
+      <option value="bal">Balanced – 100-byte packets (try first)</option>
+      <option value="fast">Fast – 180-byte packets</option>
+      <option value="safe">Safer – 60-byte packets</option>
+      <option value="slow">Slow – 20-byte packets (prints only the top)</option>
     </select>
   </section>
 
@@ -439,11 +440,11 @@ async function printMxw01(bmp) {
   const ack = await waitFor(0xA9, 10000);
   if (ack.length > 6 && ack[6] !== 0) throw new Error('Printer rejected the print request');
 
-  const props = mxw.dat.properties;
   const mode = $('xfer').value;
-  const useResp = mode === 'resp' || (mode === 'auto' && props.write);
-  let chunk = useResp ? 96 : 20;
-  const delay = useResp ? 0 : 25;
+  const presets = { fast: [180, 25], bal: [100, 25], safe: [60, 25], slow: [20, 25] };
+  const useResp = false;   // this printer's data channel only reliably accepts unacknowledged writes
+  let chunk = (presets[mode] || presets.bal)[0];
+  const delay = (presets[mode] || presets.bal)[1];
   log(`data: ${data.length} bytes, ${rows} rows, mode=${mode}, acknowledged=${useResp}, chunk=${chunk}, delay=${delay}ms`);
   let writes = 0;
   for (let i = 0; i < data.length; ) {
@@ -507,7 +508,9 @@ async function print() {
     }
     status('Done!', 'ok');
   } catch (e) {
-    status('Print failed: ' + e.message, 'err');
+    const msg = (e && e.message) ? e.message : (e && e.name) ? e.name : String(e);
+    log('ERROR: ' + msg);
+    status('Print failed: ' + msg, 'err');
   } finally {
     $('printBtn').disabled = !characteristic;
   }
