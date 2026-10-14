@@ -4,91 +4,198 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MTG Token Printer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Crimson+Pro:wght@400;600&display=swap" rel="stylesheet">
 <style>
-  :root { --bg:#14141a; --card:#1f1f29; --fg:#eee; --mut:#9a9aab; --acc:#e0a526; --bad:#e5484d; --ok:#3fb950; }
+  :root {
+    --ink:#0d0a08; --panel:#1a1411; --panel2:#251c16;
+    --gold:#d4af37; --gold-hi:#f4dc8a; --gold-lo:#8a6d1f;
+    --parch:#ece0c6; --mut:#a8987a; --bad:#ff7b6e; --ok:#86e09a;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); padding:16px; }
-  main { max-width: 900px; margin: 0 auto; display:grid; gap:16px; grid-template-columns: 1fr; }
-  @media (min-width: 800px) { main { grid-template-columns: 1fr 1fr; } header { grid-column: 1 / -1; } }
-  h1 { margin:0 0 4px; font-size:1.4rem; }
-  .card { background:var(--card); border-radius:12px; padding:16px; }
-  label { display:block; font-size:.8rem; color:var(--mut); margin:12px 0 4px; }
-  input, textarea, select { width:100%; padding:10px; border-radius:8px; border:1px solid #333; background:#111118; color:var(--fg); font-size:1rem; }
-  textarea { min-height:90px; resize:vertical; }
-  .row { display:flex; gap:8px; }
-  .row > * { flex:1; }
-  button { padding:10px 14px; border:0; border-radius:8px; background:var(--acc); color:#111; font-weight:600; font-size:1rem; cursor:pointer; }
-  button.sec { background:#33333f; color:var(--fg); }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  #status { margin-top:10px; font-size:.9rem; color:var(--mut); min-height:1.2em; }
-  #status.ok { color:var(--ok); } #status.err { color:var(--bad); }
-  #preview { width:100%; max-width:384px; background:#fff; border-radius:6px; display:block; margin:0 auto; image-rendering: pixelated; }
-  #results { display:grid; gap:6px; margin-top:10px; max-height:220px; overflow:auto; }
-  #results button { text-align:left; background:#2a2a36; color:var(--fg); font-weight:400; font-size:.9rem; }
-  .chk { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:.9rem; }
-  .chk input { width:auto; }
+  [hidden] { display:none !important; }
+  body {
+    margin:0; min-height:100vh; color:var(--parch);
+    font-family:'Crimson Pro', Georgia, serif; font-size:17px;
+    background:
+      radial-gradient(1100px 560px at 50% -12%, #43301f 0%, transparent 62%),
+      radial-gradient(800px 500px at 105% 105%, #1c2b3d 0%, transparent 55%),
+      repeating-linear-gradient(45deg, rgba(255,255,255,.015) 0 2px, transparent 2px 7px),
+      var(--ink);
+    padding:22px 16px 48px;
+  }
+  main { max-width:1000px; margin:0 auto; display:grid; gap:24px; grid-template-columns:1fr; }
+  @media (min-width: 820px) {
+    main { grid-template-columns: 1.1fr .9fr; align-items:start; }
+    header { grid-column:1 / -1; }
+    .sticky { position:sticky; top:18px; }
+  }
+
+  header { text-align:center; padding:6px 0 2px; }
+  .mana { display:flex; justify-content:center; gap:9px; margin-bottom:12px; }
+  .pip { width:22px; height:22px; border-radius:50%;
+         box-shadow: inset 0 -3px 4px rgba(0,0,0,.35), 0 0 0 2px rgba(0,0,0,.55), 0 2px 7px rgba(0,0,0,.7); }
+  .pip.w { background:radial-gradient(circle at 35% 30%, #fff, #f3ecc3 60%, #cfc597); }
+  .pip.u { background:radial-gradient(circle at 35% 30%, #d9f1ff, #7fc4ee 60%, #3f8cc0); }
+  .pip.b { background:radial-gradient(circle at 35% 30%, #8d827d, #3b3330 60%, #1a1513); }
+  .pip.r { background:radial-gradient(circle at 35% 30%, #ffd3c1, #f2805e 60%, #c04a2c); }
+  .pip.g { background:radial-gradient(circle at 35% 30%, #d5f0db, #6fbf88 60%, #2f7d4d); }
+  h1 {
+    font-family:Cinzel, Georgia, serif; font-weight:700; letter-spacing:.13em; text-transform:uppercase;
+    margin:0; font-size:clamp(1.55rem, 5.2vw, 2.4rem);
+    background:linear-gradient(180deg, var(--gold-hi), var(--gold) 55%, var(--gold-lo));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.65));
+  }
+  .tag { color:var(--mut); font-style:italic; margin-top:6px; }
+
+  .panel {
+    position:relative; border-radius:14px; padding:22px;
+    background:linear-gradient(180deg, var(--panel2), var(--panel));
+    border:1px solid var(--gold-lo);
+    box-shadow: 0 0 0 3px #0b0807, 0 0 0 4px var(--gold-lo), 0 18px 40px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+  }
+  .panel h2 {
+    font-family:Cinzel, serif; font-size:.95rem; letter-spacing:.15em; text-transform:uppercase;
+    color:var(--gold); margin:0; display:flex; align-items:center; gap:12px;
+  }
+  .panel h2::after { content:""; flex:1; height:1px; background:linear-gradient(90deg, var(--gold-lo), transparent); }
+  .panel h2:not(:first-child) { margin-top:26px; }
+
+  label {
+    display:block; font-family:Cinzel, serif; font-size:.68rem; letter-spacing:.13em; text-transform:uppercase;
+    color:var(--mut); margin:14px 0 5px;
+  }
+  input, textarea, select {
+    width:100%; padding:10px 12px; border-radius:8px; border:1px solid #4d3b28;
+    background:rgba(10,7,5,.7); color:var(--parch); font:inherit; font-size:1.02rem; outline:none;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  input:focus, textarea:focus, select:focus { border-color:var(--gold); box-shadow:0 0 0 3px rgba(212,175,55,.25); }
+  textarea { min-height:92px; resize:vertical; }
+  select {
+    appearance:none; -webkit-appearance:none; padding-right:34px;
+    background-image:linear-gradient(45deg, transparent 50%, var(--gold) 50%), linear-gradient(135deg, var(--gold) 50%, transparent 50%);
+    background-position:calc(100% - 18px) 50%, calc(100% - 13px) 50%; background-size:5px 5px; background-repeat:no-repeat;
+  }
+  input[type=range] { padding:0; border:0; background:transparent; height:30px; accent-color:var(--gold); box-shadow:none; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; min-width:0; }
+
+  button {
+    font-family:Cinzel, serif; letter-spacing:.09em; text-transform:uppercase; font-weight:700; font-size:.82rem;
+    padding:12px 16px; border-radius:10px; border:1px solid var(--gold-lo); cursor:pointer;
+    background:linear-gradient(180deg, #f6e08f, #d4af37 55%, #a67c1c); color:#2a1a05;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.5), 0 4px 10px rgba(0,0,0,.45);
+    transition:transform .1s, filter .15s;
+  }
+  button:hover:not(:disabled) { filter:brightness(1.09); }
+  button:active:not(:disabled) { transform:translateY(1px); }
+  button.sec {
+    background:linear-gradient(180deg, #2f241a, #1a1410); color:var(--gold-hi);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.08), 0 4px 10px rgba(0,0,0,.45);
+  }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+
+  #results { display:grid; gap:6px; margin-top:10px; max-height:230px; overflow:auto; padding-right:4px; }
+  #results button {
+    text-align:left; text-transform:none; letter-spacing:0; font-family:'Crimson Pro', serif; font-weight:600; font-size:.98rem;
+    padding:9px 12px; background:rgba(10,7,5,.6); color:var(--parch); border:1px solid #3c2d1d; box-shadow:none;
+  }
+  #results button:hover { border-color:var(--gold); color:var(--gold-hi); filter:none; }
+
+  .chk { display:flex; align-items:center; gap:10px; margin-top:16px; }
+  .chk input { width:18px; height:18px; padding:0; accent-color:var(--gold); }
+  .chk label { margin:0; font-family:'Crimson Pro', serif; text-transform:none; letter-spacing:0; font-size:1rem; color:var(--parch); }
+
+  .stage {
+    padding:20px 16px; border-radius:12px; border:1px solid #3c2d1d;
+    background:radial-gradient(circle at 50% 28%, #3d2c1c, #120d0a 78%);
+    box-shadow:inset 0 0 34px rgba(0,0,0,.75);
+  }
+  #preview { width:100%; max-width:330px; background:#fff; border-radius:10px; display:block; margin:0 auto;
+             box-shadow:0 14px 34px rgba(0,0,0,.75), 0 0 0 1px #000; }
+  .actions { display:flex; gap:10px; margin-top:16px; }
+  .actions > * { flex:1; }
+  #status { margin-top:14px; font-style:italic; color:var(--mut); min-height:1.3em; text-align:center; }
+  #status.ok { color:var(--ok); }
+  #status.err { color:var(--bad); }
   small { color:var(--mut); }
 </style>
 </head>
 <body>
 <main>
   <header>
+    <div class="mana">
+      <span class="pip w"></span><span class="pip u"></span><span class="pip b"></span><span class="pip r"></span><span class="pip g"></span>
+    </div>
     <h1>MTG Token Printer</h1>
-    <small>Prints to a Bluetooth ESC/POS thermal printer via Web Bluetooth (Chrome / Edge on Android, Windows, macOS, Linux, ChromeOS – not iOS Safari).</small>
+    <div class="tag">Summon a token, then print it on the spot.</div>
   </header>
 
-  <section class="card">
-    <label for="search">Look up a token on Scryfall (optional)</label>
+  <section class="panel">
+    <h2>Find a token</h2>
+    <label for="search">Search Scryfall</label>
     <div class="row">
       <input id="search" placeholder="e.g. Goblin, Treasure, Soldier">
       <button class="sec" id="searchBtn" style="flex:0 0 auto">Search</button>
     </div>
     <div id="results"></div>
 
+    <h2>Token details</h2>
     <label for="name">Name</label>
     <input id="name" value="Goblin">
     <label for="type">Type line</label>
     <input id="type" value="Token Creature — Goblin">
-    <div class="row">
-      <div><label for="pt">Power / Toughness</label><input id="pt" value="1/1"></div>
-      <div><label for="copies">Copies</label><input id="copies" type="number" min="1" max="20" value="1"></div>
-    </div>
+    <label for="pt">Power / Toughness</label>
+    <input id="pt" value="1/1">
     <label for="rules">Rules text</label>
     <textarea id="rules"></textarea>
 
-    <div class="chk"><input type="checkbox" id="useArt"><label for="useArt" style="margin:0;color:var(--fg)">Include artwork (when looked up on Scryfall)</label></div>
-    <label for="artMode">Artwork style (when artwork is ticked)</label>
+    <div class="chk"><input type="checkbox" id="useArt"><label for="useArt">Use Scryfall artwork</label></div>
+    <label for="artMode">Artwork style</label>
     <select id="artMode">
+      <option value="full">Full card image (real-card look)</option>
       <option value="crop">Artwork only, inside my layout</option>
-      <option value="full">Full card image with borders (ignores the text fields)</option>
     </select>
-    <label for="width">Paper width</label>
-    <select id="width">
-      <option value="384">58 mm (384 dots)</option>
-      <option value="576">80 mm (576 dots)</option>
-    </select>
-    <label for="darkness">Darkness (MXW01 only): <span id="darkVal">75</span></label>
-    <input id="darkness" type="range" min="1" max="100" value="75">
-    <label for="xfer">Data transfer (MXW01 only)</label>
-    <select id="xfer">
-      <option value="bal">Balanced – 100-byte packets (try first)</option>
-      <option value="fast">Fast – 180-byte packets</option>
-      <option value="safe">Safer – 60-byte packets</option>
-      <option value="slow">Slow – 20-byte packets (prints only the top)</option>
-    </select>
+
+    <h2>Print settings</h2>
+    <div class="row">
+      <div><label for="copies">Copies</label><input id="copies" type="number" min="1" max="20" value="1"></div>
+      <div>
+        <label for="width">Paper width</label>
+        <select id="width">
+          <option value="384">58 mm</option>
+          <option value="576">80 mm</option>
+        </select>
+      </div>
+    </div>
+    <label for="darkness">Darkness: <span id="darkVal">90</span></label>
+    <input id="darkness" type="range" min="1" max="100" value="90">
+
+    <div hidden>
+      <select id="xfer">
+        <option value="bal">Balanced – 100-byte packets</option>
+        <option value="fast">Fast – 180-byte packets</option>
+        <option value="safe">Safer – 60-byte packets</option>
+        <option value="slow">Slow – 20-byte packets</option>
+      </select>
+    </div>
   </section>
 
-  <section class="card">
-    <canvas id="preview"></canvas>
-    <div class="row" style="margin-top:14px">
+  <section class="panel sticky">
+    <h2>Preview</h2>
+    <div class="stage" style="margin-top:14px"><canvas id="preview"></canvas></div>
+    <div class="actions">
       <button id="connectBtn" class="sec">Connect printer</button>
       <button id="printBtn" disabled>Print</button>
     </div>
     <div id="status"></div>
-    <details style="margin-top:12px">
-      <summary style="cursor:pointer;color:var(--mut);font-size:.9rem">Debug log</summary>
-      <pre id="log" style="white-space:pre-wrap;word-break:break-all;font-size:.72rem;color:var(--mut);max-height:220px;overflow:auto"></pre>
-      <button class="sec" id="copyLog" style="font-size:.85rem;padding:6px 10px">Copy log</button>
+    <details hidden>
+      <summary>Debug log</summary>
+      <pre id="log"></pre>
+      <button class="sec" id="copyLog">Copy log</button>
     </details>
   </section>
 </main>
@@ -142,6 +249,7 @@ function pick(c, face) {
   $('pt').value = p != null ? `${p}/${t}` : '';
   $('rules').value = face.oracle_text || c.oracle_text || '';
   artImg = null; fullImg = null;
+  $('useArt').checked = true; $('artMode').value = 'full';
   const uris = face.image_uris || c.image_uris || {};
   const load = (src, assign) => {
     if (!src) return;
@@ -182,10 +290,18 @@ function render() {
   if ($('useArt').checked && $('artMode').value === 'full' && fullImg) {
     const r = Math.max(W / fullImg.width, H / fullImg.height);
     const dw = fullImg.width * r, dh = fullImg.height * r;
+    // Black rounded "card border" first, then the card image inset inside it,
+    // so the rounded corners stay visible even when the card's own edge is light.
+    const R = Math.round(W * 0.055);          // real-card corner radius (~3.5 mm on 63 mm)
+    const b = Math.max(3, Math.round(W * 0.014));
+    ctx.fillStyle = '#000';
+    roundRect(ctx, 0, 0, W, H, R); ctx.fill();
     ctx.save();
-    roundRect(ctx, 0, 0, W, H, Math.round(W * 0.055));   // real-card corner radius (~3.5 mm on 63 mm)
+    roundRect(ctx, b, b, W - 2 * b, H - 2 * b, Math.max(2, R - b));
     ctx.clip();
-    ctx.drawImage(fullImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    const r2 = Math.max((W - 2 * b) / fullImg.width, (H - 2 * b) / fullImg.height);
+    const dw2 = fullImg.width * r2, dh2 = fullImg.height * r2;
+    ctx.drawImage(fullImg, (W - dw2) / 2, (H - dh2) / 2, dw2, dh2);
     ctx.restore();
     try {
       const im = ctx.getImageData(0, 0, W, H), px = im.data;
