@@ -79,6 +79,11 @@
       <button id="printBtn" disabled>Print</button>
     </div>
     <div id="status"></div>
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer;color:var(--mut);font-size:.9rem">Debug log</summary>
+      <pre id="log" style="white-space:pre-wrap;word-break:break-all;font-size:.72rem;color:var(--mut);max-height:220px;overflow:auto"></pre>
+      <button class="sec" id="copyLog" style="font-size:.85rem;padding:6px 10px">Copy log</button>
+    </details>
   </section>
 </main>
 
@@ -337,6 +342,7 @@ async function connect() {
         ntf2.addEventListener('characteristicvaluechanged', onNotify);
       } catch (e) { /* optional */ }
       mxw = { ctl, ntf, dat };
+      log('AE01 props: ' + propStr(ctl.properties) + ' | AE02: ' + propStr(ntf.properties) + ' | AE03: ' + propStr(dat.properties));
       characteristic = ctl;
       $('width').value = '384'; $('width').disabled = true; render();
     } catch (e) { mxw = null; }
@@ -364,6 +370,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const inbox = {};
 const seen = [];
 const hex = d => Array.from(d, b => b.toString(16).padStart(2, '0')).join(' ');
+const t0log = Date.now();
+const log = m => {
+  const el = $('log');
+  if (el) el.textContent += ((Date.now() - t0log) / 1000).toFixed(1) + 's ' + m + '\n';
+};
+$('copyLog').addEventListener('click', () => {
+  try { navigator.clipboard.writeText($('log').textContent); status('Log copied.'); }
+  catch (e) { status('Could not copy – select the log text manually.', 'err'); }
+});
+const propStr = p => ['read', 'write', 'writeWithoutResponse', 'notify', 'indicate'].filter(k => p[k]).join('+');
 
 function crc8(bytes) {            // CRC-8, polynomial 0x07
   let crc = 0;
@@ -381,6 +397,7 @@ function onNotify(e) {
   const v = e.target.value;
   const d = new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
   seen.push(String(e.target.uuid).slice(4, 8) + ': ' + hex(d));
+  log('notify ' + seen[seen.length - 1]);
   if (seen.length > 20) seen.shift();
   if (d.length < 6 || d[0] !== 0x22 || d[1] !== 0x21) return;
   (inbox[d[2]] = inbox[d[2]] || []).push(d.slice());
@@ -427,6 +444,8 @@ async function printMxw01(bmp) {
   const useResp = mode === 'resp' || (mode === 'auto' && props.write);
   let chunk = useResp ? 96 : 20;
   const delay = useResp ? 0 : 25;
+  log(`data: ${data.length} bytes, ${rows} rows, mode=${mode}, acknowledged=${useResp}, chunk=${chunk}, delay=${delay}ms`);
+  let writes = 0;
   for (let i = 0; i < data.length; ) {
     const slice = data.slice(i, i + chunk);
     try {
@@ -436,8 +455,9 @@ async function printMxw01(bmp) {
       } else {
         await mxw.dat.writeValueWithoutResponse(slice);
       }
-      i += chunk;
+      i += chunk; writes++;
     } catch (e) {
+      log('write error at byte ' + i + ' (chunk ' + chunk + '): ' + e.message);
       if (chunk > 20) { chunk = 20; await sleep(50); continue; }   // fall back to default MTU size
       throw e;
     }
@@ -445,7 +465,9 @@ async function printMxw01(bmp) {
     if ((i / chunk) % 100 === 0) status(`Sending data… ${Math.round(i * 100 / data.length)}%`);
   }
 
+  log('data finished: ' + writes + ' writes, final chunk size ' + chunk);
   await sendCmd(0xAD, [0x00]);                        // flush
+  log('flush sent');
   try {                                               // print complete (not all units send this)
     await waitFor(0xAA, 10000 + (rows / 30) * 1000);
     return true;
