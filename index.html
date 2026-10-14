@@ -57,6 +57,11 @@
     <textarea id="rules"></textarea>
 
     <div class="chk"><input type="checkbox" id="useArt"><label for="useArt" style="margin:0;color:var(--fg)">Include artwork (when looked up on Scryfall)</label></div>
+    <label for="artMode">Artwork style (when artwork is ticked)</label>
+    <select id="artMode">
+      <option value="crop">Artwork only, inside my layout</option>
+      <option value="full">Full card image with borders (ignores the text fields)</option>
+    </select>
     <label for="width">Paper width</label>
     <select id="width">
       <option value="384">58 mm (384 dots)</option>
@@ -96,7 +101,7 @@ window.addEventListener('error', e => {
   if (s) { s.textContent = 'Error: ' + e.message; s.className = 'err'; }
 });
 const canvas = $('preview');
-let artImg = null;
+let artImg = null, fullImg = null;
 let device = null, characteristic = null, mxw = null;
 $('darkness').addEventListener('input', () => { $('darkVal').textContent = $('darkness').value; });
 
@@ -136,15 +141,18 @@ function pick(c, face) {
   const t = face.toughness != null ? face.toughness : c.toughness;
   $('pt').value = p != null ? `${p}/${t}` : '';
   $('rules').value = face.oracle_text || c.oracle_text || '';
-  artImg = null;
-  const src = (face.image_uris || c.image_uris || {}).art_crop;
-  if (src) {
+  artImg = null; fullImg = null;
+  const uris = face.image_uris || c.image_uris || {};
+  const load = (src, assign) => {
+    if (!src) return;
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => { artImg = img; render(); };
-    img.onerror = () => { artImg = null; render(); };
+    img.onload = () => { assign(img); render(); };
+    img.onerror = () => { assign(null); render(); };
     img.src = src;
-  }
+  };
+  load(uris.art_crop, img => { artImg = img; });
+  load(uris.border_crop || uris.normal, img => { fullImg = img; });
   render();
 }
 
@@ -169,6 +177,23 @@ function render() {
   canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H);
+
+  // Full Scryfall card image (with borders), converted to high-contrast greyscale
+  if ($('useArt').checked && $('artMode').value === 'full' && fullImg) {
+    const r = Math.max(W / fullImg.width, H / fullImg.height);
+    const dw = fullImg.width * r, dh = fullImg.height * r;
+    ctx.drawImage(fullImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    try {
+      const im = ctx.getImageData(0, 0, W, H), px = im.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const g = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+        const v = Math.max(0, Math.min(255, (g - 128) * 1.35 + 128 + 8));
+        px[i] = px[i + 1] = px[i + 2] = v;
+      }
+      ctx.putImageData(im, 0, 0);
+    } catch (e) { /* tainted canvas: leave colour, dithering will still greyscale it */ }
+    return;
+  }
   ctx.fillStyle = '#000'; ctx.strokeStyle = '#000';
 
   const m = Math.round(W * 0.03);
@@ -254,7 +279,7 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-['name', 'type', 'pt', 'rules', 'useArt', 'width'].forEach(id => $(id).addEventListener('input', render));
+['name', 'type', 'pt', 'rules', 'useArt', 'artMode', 'width'].forEach(id => $(id).addEventListener('input', render));
 render();
 
 // ---------- Bitmap conversion (Floyd–Steinberg dither) ----------
@@ -441,12 +466,13 @@ async function printMxw01(bmp) {
   if (ack.length > 6 && ack[6] !== 0) throw new Error('Printer rejected the print request');
 
   const mode = $('xfer').value;
-  const presets = { fast: [180, 25], bal: [100, 25], safe: [60, 25], slow: [20, 25] };
+  const presets = { fast: [180, 8], bal: [100, 25], safe: [60, 25], slow: [20, 25] };
   const useResp = false;   // this printer's data channel only reliably accepts unacknowledged writes
   let chunk = (presets[mode] || presets.bal)[0];
   const delay = (presets[mode] || presets.bal)[1];
   log(`data: ${data.length} bytes, ${rows} rows, mode=${mode}, acknowledged=${useResp}, chunk=${chunk}, delay=${delay}ms`);
   let writes = 0;
+  const tStart = Date.now();
   for (let i = 0; i < data.length; ) {
     const slice = data.slice(i, i + chunk);
     try {
@@ -463,10 +489,12 @@ async function printMxw01(bmp) {
       throw e;
     }
     if (delay) await sleep(delay);
+    if (writes % 40 === 0) log(`sent ${i} bytes (${writes} writes) in ${((Date.now() - tStart) / 1000).toFixed(1)}s`);
     if ((i / chunk) % 100 === 0) status(`Sending data… ${Math.round(i * 100 / data.length)}%`);
   }
 
-  log('data finished: ' + writes + ' writes, final chunk size ' + chunk);
+  const secs = (Date.now() - tStart) / 1000;
+  log('data finished: ' + writes + ' writes, final chunk size ' + chunk + ', ' + secs.toFixed(1) + 's, ~' + Math.round(data.length / secs) + ' bytes/s');
   await sendCmd(0xAD, [0x00]);                        // flush
   log('flush sent');
   try {                                               // print complete (not all units send this)
