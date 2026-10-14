@@ -77,7 +77,12 @@
 </main>
 
 <script>
+(function () {
 const $ = id => document.getElementById(id);
+window.addEventListener('error', e => {
+  const s = document.getElementById('status');
+  if (s) { s.textContent = 'Error: ' + e.message; s.className = 'err'; }
+});
 const canvas = $('preview');
 let artImg = null;
 let device = null, characteristic = null, mxw = null;
@@ -115,7 +120,8 @@ async function search() {
 function pick(c, face) {
   $('name').value = c.name.split(' // ')[0];
   $('type').value = (face.type_line || c.type_line || '');
-  const p = face.power ?? c.power, t = face.toughness ?? c.toughness;
+  const p = face.power != null ? face.power : c.power;
+  const t = face.toughness != null ? face.toughness : c.toughness;
   $('pt').value = p != null ? `${p}/${t}` : '';
   $('rules').value = face.oracle_text || c.oracle_text || '';
   artImg = null;
@@ -450,6 +456,8 @@ async function print() {
     $('printBtn').disabled = !characteristic;
   }
 }
+status(navigator.bluetooth ? 'Page ready.' : 'Page ready, but this browser has no Web Bluetooth.');
+})();
 </script>
 </body>
 </html>
