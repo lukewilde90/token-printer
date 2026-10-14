@@ -182,7 +182,11 @@ function render() {
   if ($('useArt').checked && $('artMode').value === 'full' && fullImg) {
     const r = Math.max(W / fullImg.width, H / fullImg.height);
     const dw = fullImg.width * r, dh = fullImg.height * r;
+    ctx.save();
+    roundRect(ctx, 0, 0, W, H, Math.round(W * 0.055));   // real-card corner radius (~3.5 mm on 63 mm)
+    ctx.clip();
     ctx.drawImage(fullImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    ctx.restore();
     try {
       const im = ctx.getImageData(0, 0, W, H), px = im.data;
       for (let i = 0; i < px.length; i += 4) {
@@ -196,7 +200,7 @@ function render() {
   }
   ctx.fillStyle = '#000'; ctx.strokeStyle = '#000';
 
-  const m = Math.round(W * 0.03);
+  const m = Math.max(2, Math.round(W * 0.008));   // keep my own layout close to the paper edge
   const u = W / 384;                 // scale unit
   ctx.lineWidth = 4 * u;
   roundRect(ctx, m, m, W - 2 * m, H - 2 * m, 18 * u); ctx.stroke();
